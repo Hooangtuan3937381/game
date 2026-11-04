@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Direction, LEVELS, LevelDefinition, PlayerRole } from '../game/levels';
 import { calculateStars } from '../game/rules';
+import { DomainQrModal } from './DomainQrModal';
 import {
   CrystalIconSvg,
   RunePlateIconSvg,
@@ -59,6 +60,8 @@ interface GameHudProps {
   showStageModal: boolean;
   showGuideModal: boolean;
   showCoopModal: boolean;
+  showDomainQrModal: boolean;
+  customDomain: string;
   onStartGame: (levelId?: number) => void;
   onResumeGame: () => void;
   onPauseGame: () => void;
@@ -73,6 +76,8 @@ interface GameHudProps {
   onToggleStageModal: (show: boolean) => void;
   onToggleGuideModal: (show: boolean) => void;
   onToggleCoopModal: (show: boolean) => void;
+  onToggleDomainQrModal: (show: boolean) => void;
+  onSaveCustomDomain: (domain: string) => void;
   onCreateOnlineRoom: (opts: {
     playerName: string;
     roomName: string;
@@ -108,6 +113,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   showStageModal,
   showGuideModal,
   showCoopModal,
+  showDomainQrModal,
+  customDomain,
   onStartGame,
   onResumeGame,
   onPauseGame,
@@ -122,6 +129,8 @@ export const GameHud: React.FC<GameHudProps> = ({
   onToggleStageModal,
   onToggleGuideModal,
   onToggleCoopModal,
+  onToggleDomainQrModal,
+  onSaveCustomDomain,
   onCreateOnlineRoom,
   onJoinOnlineRoom,
   onLeaveOnlineRoom,
@@ -342,6 +351,17 @@ export const GameHud: React.FC<GameHudProps> = ({
                     >
                       {copiedRoomCode ? 'Đã Sao Chép!' : 'Copy Mã/Link'}
                     </button>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        onToggleDomainQrModal(true);
+                      }}
+                      className="pixel-stone-button px-2.5 py-1 text-xs font-mono font-bold text-[#38bdf8] cursor-pointer whitespace-nowrap"
+                    >
+                      Mã QR & Tên Miền
+                    </button>
                   </div>
                 </>
               )}
@@ -359,6 +379,21 @@ export const GameHud: React.FC<GameHudProps> = ({
 
             {/* Top-Right Compact Utility Controls */}
             <div className="flex items-center gap-2 pointer-events-auto">
+              <button
+                type="button"
+                tabIndex={-1}
+                data-testid="open-domain-qr-btn"
+                aria-label="Mã QR & Tên miền riêng"
+                title="Chia sẻ Mã QR & Gắn tên miền riêng"
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  onToggleDomainQrModal(true);
+                }}
+                className="pixel-stone-button px-3 h-10 flex items-center gap-1.5 text-xs font-mono font-bold text-[#fbbf24] cursor-pointer whitespace-nowrap"
+              >
+                <span>Mã QR & Tên Miền</span>
+              </button>
+
               <button
                 type="button"
                 tabIndex={-1}
@@ -912,13 +947,22 @@ export const GameHud: React.FC<GameHudProps> = ({
                   Sảnh Chờ Online Co-op & Ghép Phòng
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={() => onToggleCoopModal(false)}
-                className="pixel-stone-button px-3 py-1.5 text-xs font-mono font-bold text-[#cbd5e1] cursor-pointer whitespace-nowrap"
-              >
-                Đóng [Esc]
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => onToggleDomainQrModal(true)}
+                  className="pixel-stone-button px-3 py-1.5 text-xs font-mono font-bold text-[#fbbf24] border-[#d97706] cursor-pointer whitespace-nowrap"
+                >
+                  Mã QR & Tên Miền Riêng
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onToggleCoopModal(false)}
+                  className="pixel-stone-button px-3 py-1.5 text-xs font-mono font-bold text-[#cbd5e1] cursor-pointer whitespace-nowrap"
+                >
+                  Đóng [Esc]
+                </button>
+              </div>
             </div>
 
             {/* Active Room Status Card if currently inside a room */}
@@ -1302,6 +1346,23 @@ export const GameHud: React.FC<GameHudProps> = ({
           </div>
         </div>
       )}
+
+      {/* 8. QR CODE & CUSTOM DOMAIN CLOUD RUN GUIDE MODAL */}
+      <DomainQrModal
+        isOpen={showDomainQrModal}
+        customDomain={customDomain}
+        activeRoomId={
+          activeRoom?.roomId ||
+          (typeof window !== 'undefined'
+            ? new URLSearchParams(window.location.search)
+                .get('room')
+                ?.trim()
+                .toUpperCase() || null
+            : null)
+        }
+        onSaveCustomDomain={onSaveCustomDomain}
+        onClose={() => onToggleDomainQrModal(false)}
+      />
     </div>
   );
 };

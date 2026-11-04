@@ -288,3 +288,32 @@ test('Laser reflection math, Undo stack, and Star mastery calculations', () => {
   assert.equal(calculateStars(20, 9, 2), 1);
   assert.equal(calculateStars(10, 9, 0), 0);
 });
+
+test('Custom domain normalization, room invite URL builder, and QR matrix generator work accurately', async () => {
+  const {
+    normalizeCustomDomain,
+    buildRoomInviteUrl,
+    generateQrMatrix,
+  } = await import('../utils/domainShare');
+
+  const validSub = normalizeCustomDomain('game.matbaodemo.vn/');
+  assert.equal(validSub.valid, true);
+  assert.equal(validSub.normalized, 'https://game.matbaodemo.vn');
+  assert.equal(validSub.subdomainHost, 'game');
+  assert.equal(validSub.rootDomain, 'matbaodemo.vn');
+
+  const invalid = normalizeCustomDomain('khong co dau cham');
+  assert.equal(invalid.valid, false);
+
+  const inviteUrl = buildRoomInviteUrl(
+    'http://localhost:3000',
+    validSub.normalized,
+    'coop12'
+  );
+  assert.equal(inviteUrl, 'https://game.matbaodemo.vn/?room=COOP12');
+
+  const qr = generateQrMatrix(inviteUrl);
+  assert.equal(qr.size > 20, true);
+  assert.equal(qr.cells.length, qr.size);
+  assert.equal(qr.cells[0].length, qr.size);
+});

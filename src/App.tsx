@@ -24,6 +24,7 @@ import {
   undoLastMove,
 } from './game/rules';
 import { soundEngine } from './game/sound';
+import { buildRoomInviteUrl, normalizeCustomDomain } from './utils/domainShare';
 
 function checkHasAdjacentMirror(state: PuzzleState, role: PlayerRole): boolean {
   const curX = role === 'P1' ? state.playerX : state.player2X;
@@ -125,6 +126,15 @@ export default function App() {
   const [showStageModal, setShowStageModal] = useState<boolean>(false);
   const [showGuideModal, setShowGuideModal] = useState<boolean>(false);
   const [showCoopModal, setShowCoopModal] = useState<boolean>(false);
+  const [showDomainQrModal, setShowDomainQrModal] = useState<boolean>(false);
+  const [customDomain, setCustomDomain] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return window.localStorage.getItem('chrono_custom_domain') || '';
+    } catch {
+      return '';
+    }
+  });
 
   const updateShellState = useCallback((next: ShellState) => {
     shellStateRef.current = next;
@@ -558,14 +568,28 @@ export default function App() {
     setAssignedRoomRole(null);
   }, [sendWsMessage]);
 
+  const handleSaveCustomDomain = useCallback((domain: string) => {
+    const res = normalizeCustomDomain(domain);
+    const cleaned = res.valid ? res.normalized : '';
+    setCustomDomain(cleaned);
+    try {
+      if (cleaned) {
+        window.localStorage.setItem('chrono_custom_domain', cleaned);
+      } else {
+        window.localStorage.removeItem('chrono_custom_domain');
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
   const handleCopyRoomInvite = useCallback(() => {
-    if (!activeRoomRef.current) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set('room', activeRoomRef.current.roomId);
-    navigator.clipboard?.writeText(url.toString()).catch(() => {});
+    const roomId = activeRoomRef.current?.roomId || initialRoomParam || null;
+    const url = buildRoomInviteUrl(window.location.origin, customDomain, roomId);
+    navigator.clipboard?.writeText(url).catch(() => {});
     setCopiedRoomCode(true);
     window.setTimeout(() => setCopiedRoomCode(false), 2000);
-  }, []);
+  }, [customDomain, initialRoomParam]);
 
   // Unified Keyboard Input Listener
   useEffect(() => {
@@ -584,10 +608,11 @@ export default function App() {
       const code = e.code;
 
       if (code === 'Escape') {
-        if (showStageModal || showGuideModal || showCoopModal) {
+        if (showStageModal || showGuideModal || showCoopModal || showDomainQrModal) {
           setShowStageModal(false);
           setShowGuideModal(false);
           setShowCoopModal(false);
+          setShowDomainQrModal(false);
           return;
         }
       }
@@ -597,7 +622,8 @@ export default function App() {
           (code === 'Enter' || code === 'Space') &&
           !showStageModal &&
           !showGuideModal &&
-          !showCoopModal
+          !showCoopModal &&
+          !showDomainQrModal
         ) {
           e.preventDefault();
           handleStartGame(puzzleRef.current.levelId);
@@ -711,6 +737,7 @@ export default function App() {
     handleTriggerHint,
     handleUndoMove,
     showCoopModal,
+    showDomainQrModal,
     showGuideModal,
     showStageModal,
     updateShellState,
@@ -884,6 +911,8 @@ export default function App() {
         showStageModal={showStageModal}
         showGuideModal={showGuideModal}
         showCoopModal={showCoopModal}
+        showDomainQrModal={showDomainQrModal}
+        customDomain={customDomain}
         onStartGame={handleStartGame}
         onResumeGame={() => updateShellState('playing')}
         onPauseGame={() => updateShellState('paused')}
@@ -898,6 +927,8 @@ export default function App() {
         onToggleStageModal={setShowStageModal}
         onToggleGuideModal={setShowGuideModal}
         onToggleCoopModal={setShowCoopModal}
+        onToggleDomainQrModal={setShowDomainQrModal}
+        onSaveCustomDomain={handleSaveCustomDomain}
         onCreateOnlineRoom={handleCreateOnlineRoom}
         onJoinOnlineRoom={handleJoinOnlineRoom}
         onLeaveOnlineRoom={handleLeaveOnlineRoom}
