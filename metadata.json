@@ -1,0 +1,6 @@
+{
+  "name": "Cổ Đài Mật Mã — Pixel Puzzle Quest",
+  "description": "Game giải đố trí tuệ phong cách pixel cổ điển: đẩy đá cổ tự, xoay gương lăng kính phản chiếu tia sáng và vượt qua vệ binh đền cổ.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
