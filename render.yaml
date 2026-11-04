@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: co-dai-mat-ma-pixel-puzzle
+    runtime: node
+    plan: free
+    buildCommand: npm install --include=dev && npm run build
+    startCommand: NODE_ENV=production npx tsx server.ts
+    envVars:
+      - key: NODE_ENV
+        value: production

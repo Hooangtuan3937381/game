@@ -3,7 +3,6 @@ import { createServer } from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createServer as createViteServer } from 'vite';
 import { Direction, PlayerRole } from './src/game/levels';
 import {
   createLevelState,
@@ -348,7 +347,11 @@ async function startServer() {
     });
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const isProd =
+    process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+
+  if (!isProd) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
