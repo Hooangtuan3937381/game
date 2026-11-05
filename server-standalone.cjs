@@ -26591,7 +26591,6 @@ module.exports = __toCommonJS(server_exports);
 var import_express = __toESM(require_express2(), 1);
 var import_http = require("http");
 var import_path = __toESM(require("path"), 1);
-var import_url = require("url");
 
 // node_modules/ws/wrapper.mjs
 var import_stream = __toESM(require_stream(), 1);
@@ -27718,10 +27717,30 @@ function undoLastMove(state) {
   return true;
 }
 
+// src/utils/playerAuth.ts
+function assignRoomRoleForPlayer(existingMembers, joiningPlayerId, preferredRole = "AUTO") {
+  const existing = existingMembers.find((m) => m.playerId === joiningPlayerId);
+  if (existing) {
+    return { assignedRole: existing.role, isReconnect: true };
+  }
+  const otherMembers = existingMembers.filter(
+    (m) => m.playerId !== joiningPlayerId
+  );
+  const p1Taken = otherMembers.some((m) => m.role === "P1");
+  const p2Taken = otherMembers.some((m) => m.role === "P2");
+  if (p1Taken && !p2Taken) {
+    return { assignedRole: "P2", isReconnect: false };
+  }
+  if (p2Taken && !p1Taken) {
+    return { assignedRole: "P1", isReconnect: false };
+  }
+  if (preferredRole === "P2") {
+    return { assignedRole: "P2", isReconnect: false };
+  }
+  return { assignedRole: "P1", isReconnect: false };
+}
+
 // server.ts
-var import_meta = {};
-var __filename = (0, import_url.fileURLToPath)(import_meta.url);
-var __dirname = import_path.default.dirname(__filename);
 var rooms = /* @__PURE__ */ new Map();
 var clientRoomMap = /* @__PURE__ */ new Map();
 var allClients = /* @__PURE__ */ new Map();
@@ -27742,7 +27761,11 @@ function serializeRoomSummary(room) {
     levelTitle: room.puzzleState.level.title,
     playerCount: room.members.length,
     maxPlayers: 2,
-    players: room.members.map((m) => ({ name: m.name, role: m.role }))
+    players: room.members.map((m) => ({
+      playerId: m.playerId,
+      name: m.name,
+      role: m.role
+    }))
   };
 }
 function getPublicRoomList() {
@@ -27774,11 +27797,15 @@ function broadcastToRoom(room, payload) {
   }
 }
 function broadcastRoomState(room) {
-  broadcastToRoom(room, {
-    type: "room:state",
-    room: serializeRoomSummary(room),
-    puzzleState: room.puzzleState
-  });
+  const summary = serializeRoomSummary(room);
+  for (const member of room.members) {
+    sendJson(member.ws, {
+      type: "room:state",
+      assignedRole: member.role,
+      room: summary,
+      puzzleState: room.puzzleState
+    });
+  }
 }
 function removeClientFromCurrentRoom(clientId) {
   const roomId = clientRoomMap.get(clientId);
@@ -27875,6 +27902,9 @@ async function startServer() {
           removeClientFromCurrentRoom(clientId);
           const levelId = Number(msg.levelId) || 11;
           const roomId = generateRoomCode();
+          const playerId = String(msg.playerId || clientId).trim() || clientId;
+          const preferredRole = msg.preferredRole === "P1" || msg.preferredRole === "P2" ? msg.preferredRole : "AUTO";
+          const initialRole = preferredRole === "P2" ? "P2" : "P1";
           const playerName = String(msg.playerName || "Ph\xE1p S\u01B0 L\u1EE5c B\u1EA3o").trim().slice(0, 24) || "Ph\xE1p S\u01B0 L\u1EE5c B\u1EA3o";
           const roomName = String(msg.roomName || `Ph\xF2ng c\u1EE7a ${playerName}`).trim().slice(0, 32) || `Ph\xF2ng #${roomId}`;
           const isPublic = msg.isPublic !== false;
@@ -27887,8 +27917,9 @@ async function startServer() {
             members: [
               {
                 clientId,
+                playerId,
                 name: playerName,
-                role: "P1",
+                role: initialRole,
                 ws
               }
             ],
@@ -27899,7 +27930,8 @@ async function startServer() {
           sendJson(ws, {
             type: "room:joined",
             clientId,
-            assignedRole: "P1",
+            playerId,
+            assignedRole: initialRole,
             room: serializeRoomSummary(room2),
             puzzleState: room2.puzzleState
           });
@@ -27911,6 +27943,8 @@ async function startServer() {
           if (!code) return;
           removeClientFromCurrentRoom(clientId);
           let room2 = rooms.get(code);
+          const playerId = String(msg.playerId || clientId).trim() || clientId;
+          const preferredRole = msg.preferredRole === "P1" || msg.preferredRole === "P2" ? msg.preferredRole : "AUTO";
           const playerName = String(msg.playerName || "Ph\xE1p S\u01B0 Lam Tinh").trim().slice(0, 24) || "Ph\xE1p S\u01B0 Lam Tinh";
           if (!room2) {
             const levelId = Number(msg.levelId) || 11;
@@ -27925,10 +27959,17 @@ async function startServer() {
             };
             rooms.set(code, room2);
           }
-          const hasP1 = room2.members.some((m) => m.role === "P1");
-          const assignedRole = hasP1 ? "P2" : "P1";
+          const { assignedRole } = assignRoomRoleForPlayer(
+            room2.members,
+            playerId,
+            preferredRole
+          );
+          room2.members = room2.members.filter(
+            (m) => m.playerId !== playerId && m.role !== assignedRole
+          );
           room2.members.push({
             clientId,
+            playerId,
             name: playerName,
             role: assignedRole,
             ws
@@ -27937,6 +27978,7 @@ async function startServer() {
           sendJson(ws, {
             type: "room:joined",
             clientId,
+            playerId,
             assignedRole,
             room: serializeRoomSummary(room2),
             puzzleState: room2.puzzleState
@@ -27956,6 +27998,18 @@ async function startServer() {
         if (!room) return;
         const member = room.members.find((m) => m.clientId === clientId);
         if (!member) return;
+        if (msg.type === "room:swap_role") {
+          if (room.members.length === 1) {
+            member.role = member.role === "P1" ? "P2" : "P1";
+          } else if (room.members.length >= 2) {
+            for (const m of room.members) {
+              m.role = m.role === "P1" ? "P2" : "P1";
+            }
+          }
+          broadcastRoomState(room);
+          broadcastLobbyList();
+          return;
+        }
         const effectiveRole = room.members.length === 1 && (msg.role === "P1" || msg.role === "P2") ? msg.role : member.role;
         if (msg.type === "room:select_level") {
           const nextLevelId = Number(msg.levelId) || 11;
@@ -28019,7 +28073,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = import_path.default.join(__dirname, "dist");
+    const distPath = import_path.default.resolve(process.cwd(), "dist");
     app.use(import_express.default.static(distPath));
     app.get("*", (_req, res) => {
       res.sendFile(import_path.default.join(distPath, "index.html"));

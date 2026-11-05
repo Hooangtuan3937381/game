@@ -10,9 +10,14 @@ import {
   stepPlayerMove,
   undoLastMove,
 } from './src/game/rules';
+import {
+  assignRoomRoleForPlayer,
+  PreferredRoleOption,
+} from './src/utils/playerAuth';
 
 export interface RoomMember {
   clientId: string;
+  playerId: string;
   name: string;
   role: PlayerRole;
   ws: WebSocket;
@@ -36,7 +41,7 @@ export interface PublicRoomSummary {
   levelTitle: string;
   playerCount: number;
   maxPlayers: number;
-  players: { name: string; role: PlayerRole }[];
+  players: { playerId: string; name: string; role: PlayerRole }[];
 }
 
 const rooms = new Map<string, RoomSession>();
@@ -61,7 +66,11 @@ function serializeRoomSummary(room: RoomSession): PublicRoomSummary {
     levelTitle: room.puzzleState.level.title,
     playerCount: room.members.length,
     maxPlayers: 2,
-    players: room.members.map((m) => ({ name: m.name, role: m.role })),
+    players: room.members.map((m) => ({
+      playerId: m.playerId,
+      name: m.name,
+      role: m.role,
+    })),
   };
 }
 
@@ -98,11 +107,15 @@ function broadcastToRoom(room: RoomSession, payload: unknown) {
 }
 
 function broadcastRoomState(room: RoomSession) {
-  broadcastToRoom(room, {
-    type: 'room:state',
-    room: serializeRoomSummary(room),
-    puzzleState: room.puzzleState,
-  });
+  const summary = serializeRoomSummary(room);
+  for (const member of room.members) {
+    sendJson(member.ws, {
+      type: 'room:state',
+      assignedRole: member.role,
+      room: summary,
+      puzzleState: room.puzzleState,
+    });
+  }
 }
 
 function removeClientFromCurrentRoom(clientId: string) {
@@ -220,6 +233,13 @@ async function startServer() {
           removeClientFromCurrentRoom(clientId);
           const levelId = Number(msg.levelId) || 11;
           const roomId = generateRoomCode();
+          const playerId = String(msg.playerId || clientId).trim() || clientId;
+          const preferredRole: PreferredRoleOption =
+            msg.preferredRole === 'P1' || msg.preferredRole === 'P2'
+              ? msg.preferredRole
+              : 'AUTO';
+          const initialRole: PlayerRole =
+            preferredRole === 'P2' ? 'P2' : 'P1';
           const playerName =
             String(msg.playerName || 'Pháp Sư Lục Bảo').trim().slice(0, 24) ||
             'Pháp Sư Lục Bảo';
@@ -238,8 +258,9 @@ async function startServer() {
             members: [
               {
                 clientId,
+                playerId,
                 name: playerName,
-                role: 'P1',
+                role: initialRole,
                 ws,
               },
             ],
@@ -252,7 +273,8 @@ async function startServer() {
           sendJson(ws, {
             type: 'room:joined',
             clientId,
-            assignedRole: 'P1',
+            playerId,
+            assignedRole: initialRole,
             room: serializeRoomSummary(room),
             puzzleState: room.puzzleState,
           });
@@ -268,6 +290,11 @@ async function startServer() {
 
           removeClientFromCurrentRoom(clientId);
           let room = rooms.get(code);
+          const playerId = String(msg.playerId || clientId).trim() || clientId;
+          const preferredRole: PreferredRoleOption =
+            msg.preferredRole === 'P1' || msg.preferredRole === 'P2'
+              ? msg.preferredRole
+              : 'AUTO';
           const playerName =
             String(msg.playerName || 'Pháp Sư Lam Tinh').trim().slice(0, 24) ||
             'Pháp Sư Lam Tinh';
@@ -287,11 +314,20 @@ async function startServer() {
             rooms.set(code, room);
           }
 
-          const hasP1 = room.members.some((m) => m.role === 'P1');
-          const assignedRole: PlayerRole = hasP1 ? 'P2' : 'P1';
+          const { assignedRole } = assignRoomRoleForPlayer(
+            room.members,
+            playerId,
+            preferredRole
+          );
+
+          // Remove any stale connection with the same playerId or same role if room had a ghost slot
+          room.members = room.members.filter(
+            (m) => m.playerId !== playerId && m.role !== assignedRole
+          );
 
           room.members.push({
             clientId,
+            playerId,
             name: playerName,
             role: assignedRole,
             ws,
@@ -301,6 +337,7 @@ async function startServer() {
           sendJson(ws, {
             type: 'room:joined',
             clientId,
+            playerId,
             assignedRole,
             room: serializeRoomSummary(room),
             puzzleState: room.puzzleState,
@@ -325,7 +362,20 @@ async function startServer() {
         const member = room.members.find((m) => m.clientId === clientId);
         if (!member) return;
 
-        // If only 1 player is connected in the room, allow them to control the role specified in msg.role (via [Tab] switch)
+        if (msg.type === 'room:swap_role') {
+          if (room.members.length === 1) {
+            member.role = member.role === 'P1' ? 'P2' : 'P1';
+          } else if (room.members.length >= 2) {
+            for (const m of room.members) {
+              m.role = m.role === 'P1' ? 'P2' : 'P1';
+            }
+          }
+          broadcastRoomState(room);
+          broadcastLobbyList();
+          return;
+        }
+
+        // Strict Role Lock: When 2 players are in the room, each player can ONLY control their assigned character!
         const effectiveRole: PlayerRole =
           room.members.length === 1 && (msg.role === 'P1' || msg.role === 'P2')
             ? msg.role

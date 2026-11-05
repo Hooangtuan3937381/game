@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Direction, LEVELS, LevelDefinition, PlayerRole } from '../game/levels';
 import { calculateStars } from '../game/rules';
+import { PlayerProfile, PreferredRoleOption } from '../utils/playerAuth';
 import { DomainQrModal } from './DomainQrModal';
 import {
   CrystalIconSvg,
@@ -19,7 +20,7 @@ export interface PublicRoomInfo {
   levelTitle: string;
   playerCount: number;
   maxPlayers: number;
-  players: { name: string; role: PlayerRole }[];
+  players: { playerId?: string; name: string; role: PlayerRole }[];
 }
 
 export interface HudSnapshot {
@@ -62,6 +63,7 @@ interface GameHudProps {
   showCoopModal: boolean;
   showDomainQrModal: boolean;
   customDomain: string;
+  playerProfile: PlayerProfile;
   onStartGame: (levelId?: number) => void;
   onResumeGame: () => void;
   onPauseGame: () => void;
@@ -70,6 +72,7 @@ interface GameHudProps {
   onRotateMirror: () => void;
   onStepDirection: (dir: Direction) => void;
   onToggleControlRole: () => void;
+  onSwapRoomRole: () => void;
   onTogglePingMode: () => void;
   onTriggerHint: () => void;
   onToggleMute: () => void;
@@ -78,6 +81,11 @@ interface GameHudProps {
   onToggleCoopModal: (show: boolean) => void;
   onToggleDomainQrModal: (show: boolean) => void;
   onSaveCustomDomain: (domain: string) => void;
+  onLoginPlayerProfile: (
+    username: string,
+    pin: string,
+    preferredRole: PreferredRoleOption
+  ) => void;
   onCreateOnlineRoom: (opts: {
     playerName: string;
     roomName: string;
@@ -115,6 +123,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   showCoopModal,
   showDomainQrModal,
   customDomain,
+  playerProfile,
   onStartGame,
   onResumeGame,
   onPauseGame,
@@ -123,6 +132,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onRotateMirror,
   onStepDirection,
   onToggleControlRole,
+  onSwapRoomRole,
   onTogglePingMode,
   onTriggerHint,
   onToggleMute,
@@ -131,6 +141,7 @@ export const GameHud: React.FC<GameHudProps> = ({
   onToggleCoopModal,
   onToggleDomainQrModal,
   onSaveCustomDomain,
+  onLoginPlayerProfile,
   onCreateOnlineRoom,
   onJoinOnlineRoom,
   onLeaveOnlineRoom,
@@ -138,12 +149,20 @@ export const GameHud: React.FC<GameHudProps> = ({
   onReturnTitle,
 }) => {
   const [stageTab, setStageTab] = useState<'solo' | 'coop'>('solo');
-  const [playerName, setPlayerName] = useState<string>('Pháp Sư Cổ Tự');
+  const [playerName, setPlayerName] = useState<string>(playerProfile.username);
+  const [pinInput, setPinInput] = useState<string>(playerProfile.pin);
+  const [preferredRoleInput, setPreferredRoleInput] =
+    useState<PreferredRoleOption>(playerProfile.preferredRole);
+  const [loginSavedNotice, setLoginSavedNotice] = useState<string>('');
   const [roomName, setRoomName] = useState<string>('Tháp Đá Hợp Lực');
   const [isPublicRoom, setIsPublicRoom] = useState<boolean>(true);
   const [selectedCoopLevel, setSelectedCoopLevel] = useState<number>(11);
   const [joinCodeInput, setJoinCodeInput] = useState<string>('');
   const [joinError, setJoinError] = useState<string>('');
+
+  const isRoleLockedInRoom = Boolean(
+    activeRoom && activeRoom.playerCount >= 2 && assignedRoomRole
+  );
 
   const soloLevels = LEVELS.filter((l) => !l.isCoop);
   const coopLevels = LEVELS.filter((l) => l.isCoop);
@@ -153,6 +172,20 @@ export const GameHud: React.FC<GameHudProps> = ({
     0
   );
 
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = playerName.trim() || playerProfile.username;
+    setPlayerName(cleanName);
+    onLoginPlayerProfile(cleanName, pinInput.trim(), preferredRoleInput);
+    setLoginSavedNotice(
+      `Đã đăng nhập: ${cleanName} (${
+        preferredRoleInput === 'AUTO'
+          ? 'Tự động phân vai không trùng'
+          : `Ưu tiên ${preferredRoleInput}`
+      })`
+    );
+  };
+
   const handleJoinByCodeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const cleaned = joinCodeInput.trim().toUpperCase();
@@ -161,7 +194,9 @@ export const GameHud: React.FC<GameHudProps> = ({
       return;
     }
     setJoinError('');
-    onJoinOnlineRoom(cleaned, playerName.trim() || 'Pháp Sư Lam Tinh');
+    const cleanName = playerName.trim() || playerProfile.username;
+    onLoginPlayerProfile(cleanName, pinInput.trim(), preferredRoleInput);
+    onJoinOnlineRoom(cleaned, cleanName);
   };
 
   return (
@@ -537,34 +572,55 @@ export const GameHud: React.FC<GameHudProps> = ({
               {/* Left/Center Action Slots with Key Bindings & Effect Clues */}
               <div className="pixel-stone-panel px-2.5 py-1.5 pointer-events-auto flex flex-wrap lg:flex-nowrap items-center gap-1.5">
                 {hud.isCoop && (
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={(e) => {
-                      e.currentTarget.blur();
-                      onToggleControlRole();
-                    }}
-                    className={`pixel-stone-button px-3 py-1.5 text-left flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
-                      activeControlRole === 'P1'
-                        ? 'border-[#10b981]'
-                        : 'border-[#38bdf8]'
-                    }`}
-                  >
-                    <span className="font-mono text-xs font-bold text-[#fbbf24]">
-                      [Tab]
-                    </span>
-                    <span
-                      className={`text-xs font-bold ${
+                  <>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      data-testid="role-indicator-btn"
+                      onClick={(e) => {
+                        e.currentTarget.blur();
+                        if (!isRoleLockedInRoom) {
+                          onToggleControlRole();
+                        }
+                      }}
+                      className={`pixel-stone-button px-3 py-1.5 text-left flex items-center gap-2 cursor-pointer whitespace-nowrap shrink-0 ${
                         activeControlRole === 'P1'
-                          ? 'text-[#6ee7b7]'
-                          : 'text-[#bae6fd]'
+                          ? 'border-[#10b981]'
+                          : 'border-[#38bdf8]'
                       }`}
                     >
-                      {activeControlRole === 'P1'
-                        ? 'Nhân Vật: P1 Lục Bảo'
-                        : 'Nhân Vật: P2 Lam Tinh'}
-                    </span>
-                  </button>
+                      <span className="font-mono text-xs font-bold text-[#fbbf24]">
+                        {isRoleLockedInRoom ? '[KHÓA VAI]' : '[Tab]'}
+                      </span>
+                      <span
+                        className={`text-xs font-bold ${
+                          activeControlRole === 'P1'
+                            ? 'text-[#6ee7b7]'
+                            : 'text-[#bae6fd]'
+                        }`}
+                      >
+                        {activeControlRole === 'P1'
+                          ? `Nhân Vật: P1 Lục Bảo (${playerProfile.username})`
+                          : `Nhân Vật: P2 Lam Tinh (${playerProfile.username})`}
+                      </span>
+                    </button>
+
+                    {activeRoom && (
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        data-testid="hud-swap-role-btn"
+                        onClick={(e) => {
+                          e.currentTarget.blur();
+                          onSwapRoomRole();
+                        }}
+                        className="pixel-stone-button px-2.5 py-1.5 text-xs font-mono font-bold text-[#fbbf24] cursor-pointer whitespace-nowrap shrink-0"
+                        title="Đổi nhân vật P1 ↔ P2 với đồng đội trên máy chủ"
+                      >
+                        Đổi Vai P1↔P2
+                      </button>
+                    )}
+                  </>
                 )}
 
                 <button
@@ -965,13 +1021,104 @@ export const GameHud: React.FC<GameHudProps> = ({
               </div>
             </div>
 
+            {/* Player Login & Character Role Lock Card */}
+            <form
+              onSubmit={handleLoginSubmit}
+              data-testid="player-login-form"
+              className="bg-[#0f141d] border-2 border-[#fbbf24] p-4 flex flex-col gap-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-[11px] font-mono uppercase tracking-wider text-[#fbbf24]">
+                    ĐĂNG NHẬP ĐỊNH DANH & KHÓA NHÂN VẬT RIÊNG BIỆT
+                  </span>
+                  <h3 className="text-sm font-bold text-[#f4f1ea]">
+                    Tài Khoản Đang Hoạt Động: {playerProfile.username} · Mã Định
+                    Danh:{' '}
+                    <span className="font-mono text-[#38bdf8]">
+                      {playerProfile.playerId}
+                    </span>
+                  </h3>
+                </div>
+                <span className="text-xs font-mono px-2.5 py-1 bg-[#161b26] border border-[#10b981] text-[#6ee7b7]">
+                  Chống Trùng Nhân Vật P1/P2: ĐÃ BẬT
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+                <label className="sm:col-span-4 flex flex-col gap-1 text-xs text-[#cbd5e1]">
+                  <span>Tên Đăng Nhập Pháp Sư</span>
+                  <input
+                    type="text"
+                    data-testid="login-username-input"
+                    value={playerName}
+                    onChange={(e) => setPlayerName(e.target.value)}
+                    placeholder="VD: TuanLucBao..."
+                    className="bg-[#161b26] border border-[#384358] px-3 py-2 text-sm text-[#f4f1ea] focus:outline-none focus:border-[#fbbf24]"
+                  />
+                </label>
+
+                <label className="sm:col-span-3 flex flex-col gap-1 text-xs text-[#cbd5e1]">
+                  <span>Mã PIN Cá Nhân (Tùy chọn)</span>
+                  <input
+                    type="text"
+                    data-testid="login-pin-input"
+                    maxLength={8}
+                    value={pinInput}
+                    onChange={(e) => setPinInput(e.target.value)}
+                    placeholder="VD: 1234"
+                    className="bg-[#161b26] border border-[#384358] px-3 py-2 text-sm font-mono text-[#f4f1ea] focus:outline-none focus:border-[#fbbf24]"
+                  />
+                </label>
+
+                <label className="sm:col-span-3 flex flex-col gap-1 text-xs text-[#cbd5e1]">
+                  <span>Nhân Vật Khi Vào Phòng</span>
+                  <select
+                    data-testid="login-role-select"
+                    value={preferredRoleInput}
+                    onChange={(e) =>
+                      setPreferredRoleInput(
+                        e.target.value as PreferredRoleOption
+                      )
+                    }
+                    className="bg-[#161b26] border border-[#384358] px-2.5 py-2 text-xs font-bold text-[#f4f1ea] focus:outline-none focus:border-[#fbbf24]"
+                  >
+                    <option value="AUTO">Tự Động (Không Trùng Vai)</option>
+                    <option value="P1">Ưu Tiên P1 (Lục Bảo)</option>
+                    <option value="P2">Ưu Tiên P2 (Lam Tinh)</option>
+                  </select>
+                </label>
+
+                <div className="sm:col-span-2">
+                  <button
+                    type="submit"
+                    data-testid="login-save-btn"
+                    className="w-full pixel-amber-cta py-2 px-3 text-xs font-bold text-[#0b0e14] cursor-pointer whitespace-nowrap"
+                  >
+                    Lưu Tài Khoản
+                  </button>
+                </div>
+              </div>
+
+              {loginSavedNotice && (
+                <div className="text-xs font-mono text-[#6ee7b7]">
+                  ✓ {loginSavedNotice}
+                </div>
+              )}
+            </form>
+
             {/* Active Room Status Card if currently inside a room */}
             {activeRoom && (
               <div className="bg-[#0f141d] border border-[#0284c7] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="text-xs font-mono text-[#38bdf8]">
-                    ĐANG Ở TRONG PHÒNG #{activeRoom.roomId} (VAI TRÒ:{' '}
-                    {assignedRoomRole || 'P1'})
+                    ĐANG Ở TRONG PHÒNG #{activeRoom.roomId} · NHÂN VẬT ĐÃ KHÓA
+                    CỦA BẠN:{' '}
+                    <strong className="text-[#fbbf24]">
+                      {assignedRoomRole === 'P2'
+                        ? 'P2 LAM TINH'
+                        : 'P1 LỤC BẢO'}
+                    </strong>
                   </div>
                   <div className="text-base font-bold text-[#f4f1ea]">
                     {activeRoom.roomName} · {activeRoom.levelTitle}
@@ -979,11 +1126,19 @@ export const GameHud: React.FC<GameHudProps> = ({
                   <div className="text-xs text-[#94a3b8] font-mono">
                     Thành viên ({activeRoom.playerCount}/2):{' '}
                     {activeRoom.players
-                      .map((p) => `${p.name} (${p.role})`)
-                      .join(', ')}
+                      .map((p) => `${p.name} [Khóa vai ${p.role}]`)
+                      .join(' · ')}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    data-testid="swap-room-role-btn"
+                    onClick={onSwapRoomRole}
+                    className="pixel-stone-button px-3 py-2 text-xs font-bold text-[#38bdf8] border-[#0284c7] cursor-pointer whitespace-nowrap"
+                  >
+                    Đổi Vai P1 ↔ P2
+                  </button>
                   <button
                     type="button"
                     onClick={onCopyRoomInvite}
@@ -1008,17 +1163,6 @@ export const GameHud: React.FC<GameHudProps> = ({
                 <h3 className="text-base font-bold text-[#fbbf24]">
                   01. Tạo Phòng Co-op Mới
                 </h3>
-
-                <label className="flex flex-col gap-1 text-xs text-[#cbd5e1]">
-                  <span>Tên Hiển Thị Của Bạn</span>
-                  <input
-                    type="text"
-                    value={playerName}
-                    onChange={(e) => setPlayerName(e.target.value)}
-                    placeholder="Nhập tên Pháp Sư..."
-                    className="bg-[#161b26] border border-[#384358] px-3 py-2 text-sm text-[#f4f1ea] focus:outline-none focus:border-[#f59e0b]"
-                  />
-                </label>
 
                 <label className="flex flex-col gap-1 text-xs text-[#cbd5e1]">
                   <span>Tên Phòng Chơi</span>
@@ -1080,8 +1224,15 @@ export const GameHud: React.FC<GameHudProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    const cleanName =
+                      playerName.trim() || playerProfile.username;
+                    onLoginPlayerProfile(
+                      cleanName,
+                      pinInput.trim(),
+                      preferredRoleInput
+                    );
                     onCreateOnlineRoom({
-                      playerName: playerName.trim() || 'Pháp Sư Lục Bảo',
+                      playerName: cleanName,
                       roomName: roomName.trim() || 'Tháp Đá Hợp Lực',
                       isPublic: isPublicRoom,
                       levelId: selectedCoopLevel,

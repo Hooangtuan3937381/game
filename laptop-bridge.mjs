@@ -149,6 +149,17 @@ function generateRoomCode() {
   return rooms.has(code) ? generateRoomCode() : code;
 }
 
+function assignRoomRole(existingMembers, joiningPlayerId, preferredRole = 'AUTO') {
+  const existing = existingMembers.find((m) => m.playerId === joiningPlayerId);
+  if (existing) return existing.role;
+  const others = existingMembers.filter((m) => m.playerId !== joiningPlayerId);
+  const p1Taken = others.some((m) => m.role === 'P1');
+  const p2Taken = others.some((m) => m.role === 'P2');
+  if (p1Taken && !p2Taken) return 'P2';
+  if (p2Taken && !p1Taken) return 'P1';
+  return preferredRole === 'P2' ? 'P2' : 'P1';
+}
+
 function serializeRoom(room) {
   return {
     roomId: room.roomId,
@@ -159,7 +170,11 @@ function serializeRoom(room) {
       room.puzzleState?.level?.title || `Màn Co-op #${room.levelId || 11}`,
     playerCount: room.members.length,
     maxPlayers: 2,
-    players: room.members.map((m) => ({ name: m.name, role: m.role })),
+    players: room.members.map((m) => ({
+      playerId: m.playerId,
+      name: m.name,
+      role: m.role,
+    })),
   };
 }
 
@@ -180,6 +195,18 @@ function broadcastRoom(room, payload) {
   for (const m of room.members) m.conn.send(payload);
 }
 
+function broadcastRoomState(room) {
+  const summary = serializeRoom(room);
+  for (const m of room.members) {
+    m.conn.send({
+      type: 'room:state',
+      assignedRole: m.role,
+      room: summary,
+      puzzleState: room.puzzleState,
+    });
+  }
+}
+
 function removeClient(clientId) {
   const code = clientRoomMap.get(clientId);
   if (!code) return;
@@ -190,11 +217,7 @@ function removeClient(clientId) {
   if (room.members.length === 0) {
     rooms.delete(code);
   } else {
-    broadcastRoom(room, {
-      type: 'room:state',
-      room: serializeRoom(room),
-      puzzleState: room.puzzleState,
-    });
+    broadcastRoomState(room);
   }
   broadcastLobby();
 }
@@ -309,6 +332,8 @@ function startStandaloneLaptopServer() {
         if (msg.type === 'room:create') {
           removeClient(clientId);
           const roomId = generateRoomCode();
+          const playerId = String(msg.playerId || clientId).trim() || clientId;
+          const initialRole = msg.preferredRole === 'P2' ? 'P2' : 'P1';
           const room = {
             roomId,
             roomName: String(msg.roomName || 'Tháp Đá Hợp Lực').slice(0, 32),
@@ -317,8 +342,9 @@ function startStandaloneLaptopServer() {
             members: [
               {
                 clientId,
+                playerId,
                 name: String(msg.playerName || 'Pháp Sư Lục Bảo').slice(0, 24),
-                role: 'P1',
+                role: initialRole,
                 conn,
               },
             ],
@@ -329,7 +355,8 @@ function startStandaloneLaptopServer() {
           conn.send({
             type: 'room:joined',
             clientId,
-            assignedRole: 'P1',
+            playerId,
+            assignedRole: initialRole,
             room: serializeRoom(room),
             puzzleState: room.puzzleState,
           });
@@ -344,6 +371,7 @@ function startStandaloneLaptopServer() {
           if (!code) return;
           removeClient(clientId);
           let room = rooms.get(code);
+          const playerId = String(msg.playerId || clientId).trim() || clientId;
           if (!room) {
             room = {
               roomId: code,
@@ -355,10 +383,20 @@ function startStandaloneLaptopServer() {
             };
             rooms.set(code, room);
           }
-          const hasP1 = room.members.some((m) => m.role === 'P1');
-          const assignedRole = hasP1 ? 'P2' : 'P1';
+          if (!room.puzzleState && msg.puzzleState) {
+            room.puzzleState = msg.puzzleState;
+          }
+          const assignedRole = assignRoomRole(
+            room.members,
+            playerId,
+            msg.preferredRole || 'AUTO'
+          );
+          room.members = room.members.filter(
+            (m) => m.playerId !== playerId && m.role !== assignedRole
+          );
           room.members.push({
             clientId,
+            playerId,
             name: String(msg.playerName || 'Pháp Sư Lam Tinh').slice(0, 24),
             role: assignedRole,
             conn,
@@ -367,15 +405,12 @@ function startStandaloneLaptopServer() {
           conn.send({
             type: 'room:joined',
             clientId,
+            playerId,
             assignedRole,
             room: serializeRoom(room),
             puzzleState: room.puzzleState,
           });
-          broadcastRoom(room, {
-            type: 'room:state',
-            room: serializeRoom(room),
-            puzzleState: room.puzzleState,
-          });
+          broadcastRoomState(room);
           broadcastLobby();
           return;
         }
@@ -393,20 +428,42 @@ function startStandaloneLaptopServer() {
         const member = room.members.find((m) => m.clientId === clientId);
         if (!member) return;
 
+        if (msg.type === 'room:swap_role') {
+          if (room.members.length === 1) {
+            member.role = member.role === 'P1' ? 'P2' : 'P1';
+          } else if (room.members.length >= 2) {
+            for (const m of room.members) {
+              m.role = m.role === 'P1' ? 'P2' : 'P1';
+            }
+          }
+          broadcastRoomState(room);
+          broadcastLobby();
+          return;
+        }
+
+        if (msg.type === 'game:move' || msg.type === 'game:rotate') {
+          // Khi có đủ 2 người chơi trong phòng, chặn mọi thao tác điều khiển nhầm sang nhân vật của người kia
+          if (
+            room.members.length >= 2 &&
+            msg.role &&
+            msg.role !== member.role
+          ) {
+            broadcastRoomState(room);
+            return;
+          }
+          if (msg.puzzleState) room.puzzleState = msg.puzzleState;
+          broadcastRoomState(room);
+          return;
+        }
+
         if (
           msg.type === 'room:select_level' ||
-          msg.type === 'game:move' ||
-          msg.type === 'game:rotate' ||
           msg.type === 'game:undo' ||
           msg.type === 'game:restart'
         ) {
           if (msg.levelId) room.levelId = Number(msg.levelId);
           if (msg.puzzleState) room.puzzleState = msg.puzzleState;
-          broadcastRoom(room, {
-            type: 'room:state',
-            room: serializeRoom(room),
-            puzzleState: room.puzzleState,
-          });
+          broadcastRoomState(room);
           broadcastLobby();
           return;
         }
@@ -416,7 +473,7 @@ function startStandaloneLaptopServer() {
             type: 'game:ping',
             x: Number(msg.x),
             y: Number(msg.y),
-            role: msg.role || member.role,
+            role: room.members.length >= 2 ? member.role : msg.role || member.role,
             senderName: member.name,
           });
         }

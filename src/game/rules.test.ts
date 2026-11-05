@@ -317,3 +317,44 @@ test('Custom domain normalization, room invite URL builder, and QR matrix genera
   assert.equal(qr.cells.length, qr.size);
   assert.equal(qr.cells[0].length, qr.size);
 });
+
+test('Player login deterministic ID and Co-op room role assignment prevent two players from controlling the same character', async () => {
+  const {
+    buildDeterministicPlayerId,
+    assignRoomRoleForPlayer,
+  } = await import('../utils/playerAuth');
+
+  const idA = buildDeterministicPlayerId('Tuan', '1234', 'dev-1');
+  const idA_again = buildDeterministicPlayerId('tuan', '1234', 'dev-999');
+  assert.equal(idA, idA_again);
+
+  const idB = buildDeterministicPlayerId('Minh', '5678', 'dev-2');
+  assert.notEqual(idA, idB);
+
+  // Player A creates/joins room preferring AUTO -> gets P1
+  const resA = assignRoomRoleForPlayer([], idA, 'AUTO');
+  assert.equal(resA.assignedRole, 'P1');
+  assert.equal(resA.isReconnect, false);
+
+  // Player B joins room where Player A already holds P1 -> even if B requests P1 or AUTO, B strictly gets P2
+  const resB = assignRoomRoleForPlayer(
+    [{ playerId: idA, name: 'Tuan', role: resA.assignedRole }],
+    idB,
+    'P1'
+  );
+  assert.equal(resB.assignedRole, 'P2');
+  assert.equal(resB.isReconnect, false);
+
+  // If Player A reconnects while Player B is in the room with P2, Player A keeps P1
+  const resAReconnect = assignRoomRoleForPlayer(
+    [
+      { playerId: idA, name: 'Tuan', role: 'P1' },
+      { playerId: idB, name: 'Minh', role: 'P2' },
+    ],
+    idA,
+    'AUTO'
+  );
+  assert.equal(resAReconnect.assignedRole, 'P1');
+  assert.equal(resAReconnect.isReconnect, true);
+});
+

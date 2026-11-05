@@ -25,6 +25,12 @@ import {
 } from './game/rules';
 import { soundEngine } from './game/sound';
 import { buildRoomInviteUrl, normalizeCustomDomain } from './utils/domainShare';
+import {
+  loadSavedPlayerProfile,
+  PlayerProfile,
+  PreferredRoleOption,
+  savePlayerProfile,
+} from './utils/playerAuth';
 
 function checkHasAdjacentMirror(state: PuzzleState, role: PlayerRole): boolean {
   const curX = role === 'P1' ? state.playerX : state.player2X;
@@ -85,6 +91,11 @@ export default function App() {
   const initialShell: ShellState =
     isAutostart || initialRoomParam ? 'playing' : 'title';
 
+  const [playerProfile, setPlayerProfile] = useState<PlayerProfile>(() =>
+    loadSavedPlayerProfile()
+  );
+  const playerProfileRef = useRef<PlayerProfile>(playerProfile);
+
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<PixelSceneRenderer>(new PixelSceneRenderer());
   const puzzleRef = useRef<PuzzleState>(
@@ -92,6 +103,7 @@ export default function App() {
   );
   const shellStateRef = useRef<ShellState>(initialShell);
   const activeRoleRef = useRef<PlayerRole>('P1');
+  const assignedRoomRoleRef = useRef<PlayerRole | null>(null);
   const elapsedSecRef = useRef<number>(0);
   const defeatReasonRef = useRef<string>('');
   const hintTargetRef = useRef<{ x: number; y: number } | null>(null);
@@ -355,7 +367,9 @@ export default function App() {
               type: 'room:join',
               roomId: roomToJoin,
               levelId: puzzleRef.current.levelId,
-              playerName: 'Pháp Sư Đồng Hành',
+              playerId: playerProfileRef.current.playerId,
+              playerName: playerProfileRef.current.username,
+              preferredRole: playerProfileRef.current.preferredRole,
             })
           );
         }
@@ -373,9 +387,11 @@ export default function App() {
 
           if (msg.type === 'room:joined') {
             const roomInfo = msg.room as PublicRoomInfo;
-            const role = (msg.assignedRole as PlayerRole) || 'P1';
+            const role: PlayerRole =
+              msg.assignedRole === 'P2' ? 'P2' : 'P1';
             activeRoomRef.current = roomInfo;
             setActiveRoom(roomInfo);
+            assignedRoomRoleRef.current = role;
             setAssignedRoomRole(role);
             activeRoleRef.current = role;
             setActiveControlRole(role);
@@ -405,6 +421,18 @@ export default function App() {
             activeRoomRef.current = roomInfo;
             setActiveRoom(roomInfo);
 
+            if (msg.assignedRole === 'P1' || msg.assignedRole === 'P2') {
+              const assigned = msg.assignedRole as PlayerRole;
+              const prevAssigned = assignedRoomRoleRef.current;
+              assignedRoomRoleRef.current = assigned;
+              setAssignedRoomRole(assigned);
+              // Always lock control to assignedRole when 2 players are in the room or when role was swapped
+              if (roomInfo.playerCount >= 2 || prevAssigned !== assigned) {
+                activeRoleRef.current = assigned;
+                setActiveControlRole(assigned);
+              }
+            }
+
             if (msg.puzzleState) {
               const incoming = msg.puzzleState as PuzzleState;
               const levelChanged =
@@ -421,6 +449,8 @@ export default function App() {
               }
               processFeedbackEvents();
               syncHudFromRef();
+            } else {
+              syncHudFromRef();
             }
             return;
           }
@@ -428,6 +458,7 @@ export default function App() {
           if (msg.type === 'room:left') {
             activeRoomRef.current = null;
             setActiveRoom(null);
+            assignedRoomRoleRef.current = null;
             setAssignedRoomRole(null);
             const url = new URL(window.location.href);
             url.searchParams.delete('room');
@@ -492,7 +523,7 @@ export default function App() {
         });
       }
 
-      activeRoleRef.current = assignedRoomRole || 'P1';
+      activeRoleRef.current = assignedRoomRoleRef.current || 'P1';
       setActiveControlRole(activeRoleRef.current);
       elapsedSecRef.current = 0;
       defeatReasonRef.current = '';
@@ -509,7 +540,7 @@ export default function App() {
       updateShellState('playing');
       syncHudFromRef();
     },
-    [assignedRoomRole, sendWsMessage, syncHudFromRef, updateShellState]
+    [sendWsMessage, syncHudFromRef, updateShellState]
   );
 
   const handleRestartLevel = useCallback(() => {
@@ -528,6 +559,17 @@ export default function App() {
 
   const handleToggleControlRole = useCallback(() => {
     if (!puzzleRef.current.isCoop) return;
+    // Strict Role Lock: when 2 players are in an online room, each player only controls their assigned character
+    if (
+      activeRoomRef.current &&
+      activeRoomRef.current.playerCount >= 2 &&
+      assignedRoomRoleRef.current
+    ) {
+      activeRoleRef.current = assignedRoomRoleRef.current;
+      setActiveControlRole(assignedRoomRoleRef.current);
+      soundEngine.playBump();
+      return;
+    }
     const nextRole: PlayerRole = activeRoleRef.current === 'P1' ? 'P2' : 'P1';
     activeRoleRef.current = nextRole;
     setActiveControlRole(nextRole);
@@ -539,7 +581,13 @@ export default function App() {
     (dir: Direction) => {
       if (shellStateRef.current !== 'playing') return;
       hintTargetRef.current = null;
-      const role = puzzleRef.current.isCoop ? activeRoleRef.current : 'P1';
+      const lockedOnlineRole =
+        activeRoomRef.current && activeRoomRef.current.playerCount >= 2
+          ? assignedRoomRoleRef.current
+          : null;
+      const role = puzzleRef.current.isCoop
+        ? lockedOnlineRole || activeRoleRef.current
+        : 'P1';
 
       // Optimistic local step + authoritative WS broadcast if in an online room
       stepPlayerMove(puzzleRef.current, dir, role);
@@ -561,7 +609,13 @@ export default function App() {
   const handleRotateMirror = useCallback(() => {
     if (shellStateRef.current !== 'playing') return;
     hintTargetRef.current = null;
-    const role = puzzleRef.current.isCoop ? activeRoleRef.current : 'P1';
+    const lockedOnlineRole =
+      activeRoomRef.current && activeRoomRef.current.playerCount >= 2
+        ? assignedRoomRoleRef.current
+        : null;
+    const role = puzzleRef.current.isCoop
+      ? lockedOnlineRole || activeRoleRef.current
+      : 'P1';
 
     rotateAdjacentMirror(puzzleRef.current, role);
     processFeedbackEvents();
@@ -636,6 +690,32 @@ export default function App() {
     setMuted(soundEngine.muted);
   }, []);
 
+  const handleLoginPlayerProfile = useCallback(
+    (username: string, pin: string, preferredRole: PreferredRoleOption) => {
+      const saved = savePlayerProfile(username, pin, preferredRole);
+      playerProfileRef.current = saved;
+      setPlayerProfile(saved);
+      soundEngine.playPlateActivate();
+
+      if (activeRoomRef.current) {
+        sendWsMessage({
+          type: 'room:join',
+          roomId: activeRoomRef.current.roomId,
+          playerId: saved.playerId,
+          playerName: saved.username,
+          preferredRole: saved.preferredRole,
+        });
+      }
+    },
+    [sendWsMessage]
+  );
+
+  const handleSwapRoomRole = useCallback(() => {
+    if (!activeRoomRef.current) return;
+    soundEngine.playRotateMirror();
+    sendWsMessage({ type: 'room:swap_role' });
+  }, [sendWsMessage]);
+
   const handleCreateOnlineRoom = useCallback(
     (opts: {
       playerName: string;
@@ -643,11 +723,15 @@ export default function App() {
       isPublic: boolean;
       levelId: number;
     }) => {
+      const profile = playerProfileRef.current;
       const initialPuzzleState = createLevelState(opts.levelId);
       if (
         !sendWsMessage({
           type: 'room:create',
           ...opts,
+          playerName: opts.playerName || profile.username,
+          playerId: profile.playerId,
+          preferredRole: profile.preferredRole,
           puzzleState: initialPuzzleState,
         })
       ) {
@@ -660,7 +744,14 @@ export default function App() {
 
   const handleJoinOnlineRoom = useCallback(
     (roomId: string, playerName: string) => {
-      sendWsMessage({ type: 'room:join', roomId, playerName });
+      const profile = playerProfileRef.current;
+      sendWsMessage({
+        type: 'room:join',
+        roomId,
+        playerName: playerName || profile.username,
+        playerId: profile.playerId,
+        preferredRole: profile.preferredRole,
+      });
     },
     [sendWsMessage]
   );
@@ -669,6 +760,7 @@ export default function App() {
     sendWsMessage({ type: 'room:leave' });
     activeRoomRef.current = null;
     setActiveRoom(null);
+    assignedRoomRoleRef.current = null;
     setAssignedRoomRole(null);
   }, [sendWsMessage]);
 
@@ -945,7 +1037,13 @@ export default function App() {
 
     // If Ping Mode is active or right-clicked, emit map ping beacon on tile (gx, gy)
     if (pingModeActive || e.button === 2) {
-      const role = state.isCoop ? activeRoleRef.current : 'P1';
+      const lockedOnlineRole =
+        activeRoomRef.current && activeRoomRef.current.playerCount >= 2
+          ? assignedRoomRoleRef.current
+          : null;
+      const role = state.isCoop
+        ? lockedOnlineRole || activeRoleRef.current
+        : 'P1';
       soundEngine.playRotateMirror();
       rendererRef.current.addPing(gx, gy, role, role);
       if (activeRoomRef.current) {
@@ -955,13 +1053,20 @@ export default function App() {
       return;
     }
 
-    const role = state.isCoop ? activeRoleRef.current : 'P1';
+    const lockedOnlineRole =
+      activeRoomRef.current && activeRoomRef.current.playerCount >= 2
+        ? assignedRoomRoleRef.current
+        : null;
+    const role = state.isCoop
+      ? lockedOnlineRole || activeRoleRef.current
+      : 'P1';
     const curX = role === 'P1' ? state.playerX : state.player2X;
     const curY = role === 'P1' ? state.playerY : state.player2Y;
 
-    // Clicking directly on the other Co-op character switches active control role
+    // Clicking directly on the other Co-op character switches active control role only if not locked in a 2-player room
     if (
       state.isCoop &&
+      !lockedOnlineRole &&
       ((role === 'P1' && gx === state.player2X && gy === state.player2Y) ||
         (role === 'P2' && gx === state.playerX && gy === state.playerY))
     ) {
@@ -1017,6 +1122,9 @@ export default function App() {
         showCoopModal={showCoopModal}
         showDomainQrModal={showDomainQrModal}
         customDomain={customDomain}
+        playerProfile={playerProfile}
+        onLoginPlayerProfile={handleLoginPlayerProfile}
+        onSwapRoomRole={handleSwapRoomRole}
         onStartGame={handleStartGame}
         onResumeGame={() => updateShellState('playing')}
         onPauseGame={() => updateShellState('paused')}
