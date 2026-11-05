@@ -481,13 +481,17 @@ export default function App() {
   const handleStartGame = useCallback(
     (targetLevelId?: number) => {
       const lvlId = targetLevelId ?? puzzleRef.current.levelId;
-
-      if (activeRoomRef.current) {
-        sendWsMessage({ type: 'room:select_level', levelId: lvlId });
-      }
-
       const freshState = createLevelState(lvlId);
       puzzleRef.current = freshState;
+
+      if (activeRoomRef.current) {
+        sendWsMessage({
+          type: 'room:select_level',
+          levelId: lvlId,
+          puzzleState: freshState,
+        });
+      }
+
       activeRoleRef.current = assignedRoomRole || 'P1';
       setActiveControlRole(activeRoleRef.current);
       elapsedSecRef.current = 0;
@@ -509,11 +513,18 @@ export default function App() {
   );
 
   const handleRestartLevel = useCallback(() => {
-    if (activeRoomRef.current && sendWsMessage({ type: 'game:restart' })) {
+    const freshState = createLevelState(puzzleRef.current.levelId);
+    if (
+      activeRoomRef.current &&
+      sendWsMessage({ type: 'game:restart', puzzleState: freshState })
+    ) {
+      puzzleRef.current = freshState;
+      rendererRef.current.syncStateInstant(freshState);
+      syncHudFromRef();
       return;
     }
     handleStartGame(puzzleRef.current.levelId);
-  }, [handleStartGame, sendWsMessage]);
+  }, [handleStartGame, sendWsMessage, syncHudFromRef]);
 
   const handleToggleControlRole = useCallback(() => {
     if (!puzzleRef.current.isCoop) return;
@@ -536,7 +547,12 @@ export default function App() {
       syncHudFromRef();
 
       if (activeRoomRef.current) {
-        sendWsMessage({ type: 'game:move', dir, role });
+        sendWsMessage({
+          type: 'game:move',
+          dir,
+          role,
+          puzzleState: puzzleRef.current,
+        });
       }
     },
     [processFeedbackEvents, sendWsMessage, syncHudFromRef]
@@ -552,7 +568,11 @@ export default function App() {
     syncHudFromRef();
 
     if (activeRoomRef.current) {
-      sendWsMessage({ type: 'game:rotate', role });
+      sendWsMessage({
+        type: 'game:rotate',
+        role,
+        puzzleState: puzzleRef.current,
+      });
     }
   }, [processFeedbackEvents, sendWsMessage, syncHudFromRef]);
 
@@ -563,10 +583,13 @@ export default function App() {
     ) {
       return;
     }
-    if (activeRoomRef.current) {
-      sendWsMessage({ type: 'game:undo' });
-    }
     if (undoLastMove(puzzleRef.current)) {
+      if (activeRoomRef.current) {
+        sendWsMessage({
+          type: 'game:undo',
+          puzzleState: puzzleRef.current,
+        });
+      }
       soundEngine.playUndo();
       rendererRef.current.syncStateInstant(puzzleRef.current);
       if (shellStateRef.current === 'gameover') {
@@ -620,7 +643,14 @@ export default function App() {
       isPublic: boolean;
       levelId: number;
     }) => {
-      if (!sendWsMessage({ type: 'room:create', ...opts })) {
+      const initialPuzzleState = createLevelState(opts.levelId);
+      if (
+        !sendWsMessage({
+          type: 'room:create',
+          ...opts,
+          puzzleState: initialPuzzleState,
+        })
+      ) {
         // Fallback if WS is still connecting: start Co-op level immediately
         handleStartGame(opts.levelId);
       }
