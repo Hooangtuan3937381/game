@@ -21,7 +21,9 @@ export const DomainQrModal: React.FC<DomainQrModalProps> = ({
   onClose,
 }) => {
   const [domainInput, setDomainInput] = useState<string>(
-    customDomain ? customDomain.replace(/^https?:\/\//, '') : ''
+    customDomain
+      ? customDomain.replace(/^https?:\/\//, '')
+      : 'game.hoangnhattuan.click'
   );
   const [domainError, setDomainError] = useState<string>('');
   const [savedNotice, setSavedNotice] = useState<string>('');
@@ -30,7 +32,7 @@ export const DomainQrModal: React.FC<DomainQrModalProps> = ({
   const fallbackOrigin =
     typeof window !== 'undefined'
       ? window.location.origin
-      : 'https://game.tenmiencuaban.com';
+      : 'https://game.hoangnhattuan.click';
 
   const parsedPreview = useMemo(() => {
     if (domainInput.trim()) {
@@ -45,7 +47,7 @@ export const DomainQrModal: React.FC<DomainQrModalProps> = ({
       valid: true,
       normalized: '',
       subdomainHost: 'game',
-      rootDomain: 'tenmiencuaban.com',
+      rootDomain: 'hoangnhattuan.click',
     };
   }, [customDomain, domainInput]);
 
@@ -114,7 +116,7 @@ export const DomainQrModal: React.FC<DomainQrModalProps> = ({
     URL.revokeObjectURL(url);
   };
 
-  const [guideTab, setGuideTab] = useState<'nocard' | 'cloudrun'>('nocard');
+  const [guideTab, setGuideTab] = useState<'laptop' | 'nocard' | 'cloudrun'>('laptop');
 
   const quietZone = 3;
   const viewBoxSize = qrMatrix.size + quietZone * 2;
@@ -172,7 +174,7 @@ export const DomainQrModal: React.FC<DomainQrModalProps> = ({
                     setDomainInput(e.target.value);
                     if (domainError) setDomainError('');
                   }}
-                  placeholder="game.tenmiencuaban.com"
+                  placeholder="game.hoangnhattuan.click"
                   className="flex-1 bg-[#161b26] border border-[#384358] px-3 py-2 text-xs font-mono text-[#f4f1ea] focus:outline-none focus:border-[#fbbf24]"
                 />
                 <button
@@ -272,36 +274,98 @@ export const DomainQrModal: React.FC<DomainQrModalProps> = ({
           <div className="lg:col-span-7 bg-[#0f141d] border border-[#263042] p-4 flex flex-col gap-3.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold text-[#38bdf8]">
-                02. Hướng Dẫn Gắn Tên Miền ({parsedPreview.subdomainHost}.
+                02. Hướng Dẫn Chạy Server & Tên Miền ({parsedPreview.subdomainHost}.
                 {parsedPreview.rootDomain})
               </h3>
-              <div className="flex items-center gap-1.5 bg-[#161b26] p-1 border border-[#263042]">
+              <div className="flex flex-wrap items-center gap-1 bg-[#161b26] p-1 border border-[#263042]">
+                <button
+                  type="button"
+                  onClick={() => setGuideTab('laptop')}
+                  className={`px-2 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap ${
+                    guideTab === 'laptop'
+                      ? 'bg-[#232b3d] text-[#38bdf8]'
+                      : 'text-[#94a3b8] hover:text-[#f4f1ea]'
+                  }`}
+                >
+                  Laptop Làm Server (Ping ~10ms)
+                </button>
                 <button
                   type="button"
                   onClick={() => setGuideTab('nocard')}
-                  className={`px-2.5 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap ${
+                  className={`px-2 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap ${
                     guideTab === 'nocard'
                       ? 'bg-[#232b3d] text-[#6ee7b7]'
                       : 'text-[#94a3b8] hover:text-[#f4f1ea]'
                   }`}
                 >
-                  Không Cần Thẻ (GitHub + Render)
+                  GitHub + Render
                 </button>
                 <button
                   type="button"
                   onClick={() => setGuideTab('cloudrun')}
-                  className={`px-2.5 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap ${
+                  className={`px-2 py-1 text-[11px] font-bold cursor-pointer whitespace-nowrap ${
                     guideTab === 'cloudrun'
                       ? 'bg-[#232b3d] text-[#fbbf24]'
                       : 'text-[#94a3b8] hover:text-[#f4f1ea]'
                   }`}
                 >
-                  Google Cloud Run
+                  Cloud Run
                 </button>
               </div>
             </div>
 
-            {guideTab === 'nocard' ? (
+            {guideTab === 'laptop' ? (
+              <div className="space-y-2.5 text-xs text-[#cbd5e1] leading-relaxed">
+                <div className="bg-[#161b26] border border-[#263042] p-3 space-y-1">
+                  <div className="font-bold text-[#38bdf8]">
+                    Bước 1: Tải code về Laptop & Nhấp đúp chạy file chay-server-laptop.bat
+                  </div>
+                  <p>
+                    Tải bộ code từ GitHub (<span className="font-mono text-[#6ee7b7]">Hooangtuan3937381/game</span>) về
+                    laptop Windows của bạn (đã cài <strong className="text-[#f4f1ea]">Node.js</strong>) rồi nhấp đúp
+                    vào file <span className="font-mono text-[#fbbf24]">chay-server-laptop.bat</span>. Máy chủ game
+                    sẽ khởi chạy ngay tại <span className="font-mono text-[#38bdf8]">http://localhost:3000</span> với
+                    độ trễ gần như bằng 0!
+                  </p>
+                </div>
+
+                <div className="bg-[#161b26] border border-[#263042] p-3 space-y-1">
+                  <div className="font-bold text-[#38bdf8]">
+                    Bước 2: Mở kết nối ra Internet bằng Cloudflare Tunnel (Không cần mở Port Router)
+                  </div>
+                  <p>
+                    Mở bảng điều khiển <strong className="text-[#f4f1ea]">Cloudflare Zero Trust → Networks → Tunnels</strong>{' '}
+                    → nhấn <strong className="text-[#f4f1ea]">Create a tunnel</strong> → đặt tên{' '}
+                    <span className="font-mono text-[#6ee7b7]">game-laptop</span> và chạy lệnh cài{' '}
+                    <span className="font-mono text-[#fbbf24]">cloudflared</span> mà Cloudflare cấp trên CMD của laptop.
+                  </p>
+                </div>
+
+                <div className="bg-[#161b26] border border-[#384358] p-3 space-y-1.5">
+                  <div className="font-bold text-[#fbbf24]">
+                    Bước 3: Gắn thẳng vào tên miền {parsedPreview.subdomainHost}.{parsedPreview.rootDomain}
+                  </div>
+                  <p>
+                    Trong tab <strong className="text-[#f4f1ea]">Public Hostname</strong> của Tunnel:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 font-mono text-[11px] text-[#e2e8f0]">
+                    <li>
+                      Subdomain: <span className="text-[#6ee7b7] font-bold">{parsedPreview.subdomainHost}</span> · Domain:{' '}
+                      <span className="text-[#6ee7b7] font-bold">{parsedPreview.rootDomain}</span>
+                    </li>
+                    <li>
+                      Service Type: <span className="text-[#fbbf24] font-bold">HTTP</span> · URL:{' '}
+                      <span className="text-[#38bdf8] font-bold">localhost:3000</span>
+                    </li>
+                  </ul>
+                  <p className="text-[11px] text-[#94a3b8]">
+                    Cloudflare sẽ tự động trỏ CNAME về thẳng laptop của bạn qua cụm máy chủ tại Việt Nam (Hà Nội / TP.HCM) —
+                    bạn bè vào <span className="font-mono text-[#6ee7b7]">https://{parsedPreview.subdomainHost}.{parsedPreview.rootDomain}</span>{' '}
+                    sẽ mượt tức thì, không bao giờ bị ngủ đông!
+                  </p>
+                </div>
+              </div>
+            ) : guideTab === 'nocard' ? (
               <div className="space-y-2.5 text-xs text-[#cbd5e1] leading-relaxed">
                 <div className="bg-[#161b26] border border-[#263042] p-3 space-y-1">
                   <div className="font-bold text-[#6ee7b7]">

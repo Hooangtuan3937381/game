@@ -266,28 +266,73 @@ export default function App() {
     return false;
   }, []);
 
-  // Connect to Authoritative WebSocket Server on port 3000 (/ws)
+  // Connect to Authoritative WebSocket Server with Auto-Failover (Laptop Primary -> Render Backup)
   useEffect(() => {
     let reconnectTimer = 0;
+    let connectTimeoutTimer = 0;
     let isUnmounted = false;
 
-    const connect = () => {
-      if (isUnmounted) return;
+    const getCandidateWsUrls = (): string[] => {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/ws`;
-      const ws = new WebSocket(wsUrl);
+      const defaultUrl = `${proto}//${window.location.host}/ws`;
+      const host = window.location.hostname.toLowerCase();
+
+      // If hosted on game.<domain> (e.g. game.hoangnhattuan.click), prioritize laptop.<domain> first!
+      const candidates: string[] = [];
+      try {
+        const savedLaptop = window.localStorage.getItem('chrono_laptop_domain');
+        if (savedLaptop) {
+          const parsed = new URL(savedLaptop);
+          const wsProto = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+          candidates.push(`${wsProto}//${parsed.host}/ws`);
+        } else if (host.startsWith('game.')) {
+          const root = host.slice('game.'.length);
+          candidates.push(`wss://laptop.${root}/ws`);
+        }
+      } catch {
+        // ignore URL parse errors
+      }
+
+      if (!candidates.includes(defaultUrl)) {
+        candidates.push(defaultUrl);
+      }
+      return candidates;
+    };
+
+    const connectWithIndex = (index: number) => {
+      if (isUnmounted) return;
+      const candidates = getCandidateWsUrls();
+      const targetUrl = candidates[index % candidates.length];
+      const hasBackup = index + 1 < candidates.length;
+
+      const ws = new WebSocket(targetUrl);
       wsRef.current = ws;
+      let opened = false;
+
+      if (hasBackup) {
+        // Fast 1500ms probe for the Laptop Server; if laptop is off, fail over immediately to Render Backup
+        connectTimeoutTimer = window.setTimeout(() => {
+          if (!opened && ws.readyState !== WebSocket.OPEN) {
+            ws.close();
+          }
+        }, 1500);
+      }
 
       ws.onopen = () => {
+        opened = true;
+        window.clearTimeout(connectTimeoutTimer);
         if (isUnmounted) return;
         setWsConnected(true);
         ws.send(JSON.stringify({ type: 'lobby:subscribe' }));
 
-        if (initialRoomParam && !activeRoomRef.current) {
+        const roomToJoin =
+          activeRoomRef.current?.roomId || initialRoomParam || '';
+        if (roomToJoin) {
           ws.send(
             JSON.stringify({
               type: 'room:join',
-              roomId: initialRoomParam,
+              roomId: roomToJoin,
+              levelId: puzzleRef.current.levelId,
               playerName: 'Pháp Sư Đồng Hành',
             })
           );
@@ -384,17 +429,24 @@ export default function App() {
       };
 
       ws.onclose = () => {
+        window.clearTimeout(connectTimeoutTimer);
         if (isUnmounted) return;
         setWsConnected(false);
-        reconnectTimer = window.setTimeout(connect, 2000);
+        if (!opened && hasBackup) {
+          // Immediately fail over to Backup Render Server without waiting 2s
+          connectWithIndex(index + 1);
+        } else {
+          reconnectTimer = window.setTimeout(() => connectWithIndex(0), 2000);
+        }
       };
     };
 
-    connect();
+    connectWithIndex(0);
 
     return () => {
       isUnmounted = true;
       window.clearTimeout(reconnectTimer);
+      window.clearTimeout(connectTimeoutTimer);
       wsRef.current?.close();
     };
   }, [
