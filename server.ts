@@ -1,7 +1,6 @@
 import express from 'express';
 import { createServer } from 'http';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { Direction, PlayerRole } from './src/game/levels';
 import {
@@ -11,9 +10,6 @@ import {
   stepPlayerMove,
   undoLastMove,
 } from './src/game/rules';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 export interface RoomMember {
   clientId: string;
@@ -407,7 +403,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
+    const distPath = path.resolve(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
