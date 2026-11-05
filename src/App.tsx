@@ -272,36 +272,58 @@ export default function App() {
     let connectTimeoutTimer = 0;
     let isUnmounted = false;
 
-    const getCandidateWsUrls = (): string[] => {
+    const getCandidateWsUrls = async (): Promise<string[]> => {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const defaultUrl = `${proto}//${window.location.host}/ws`;
       const host = window.location.hostname.toLowerCase();
-
-      // If hosted on game.<domain> (e.g. game.hoangnhattuan.click), prioritize laptop.<domain> first!
       const candidates: string[] = [];
+
+      // 1. Check if Laptop Server registered an active tunnel with Render (/api/laptop-tunnel)
+      try {
+        const ctrl = new AbortController();
+        const tid = window.setTimeout(() => ctrl.abort(), 700);
+        const res = await fetch('/api/laptop-tunnel', { signal: ctrl.signal });
+        window.clearTimeout(tid);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.active && typeof data.url === 'string') {
+            const parsed = new URL(data.url);
+            const wsProto = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+            candidates.push(`${wsProto}//${parsed.host}/ws`);
+          }
+        }
+      } catch {
+        // ignore fetch timeout
+      }
+
+      // 2. Check custom laptop domain or laptop.<domain> if configured
       try {
         const savedLaptop = window.localStorage.getItem('chrono_laptop_domain');
         if (savedLaptop) {
           const parsed = new URL(savedLaptop);
           const wsProto = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
-          candidates.push(`${wsProto}//${parsed.host}/ws`);
+          const candidate = `${wsProto}//${parsed.host}/ws`;
+          if (!candidates.includes(candidate)) candidates.push(candidate);
         } else if (host.startsWith('game.')) {
           const root = host.slice('game.'.length);
-          candidates.push(`wss://laptop.${root}/ws`);
+          const candidate = `wss://laptop.${root}/ws`;
+          if (!candidates.includes(candidate)) candidates.push(candidate);
         }
       } catch {
         // ignore URL parse errors
       }
 
+      // 3. Always include the 24/7 Render Backup Server (game-6ckg.onrender.com / game.hoangnhattuan.click)
       if (!candidates.includes(defaultUrl)) {
         candidates.push(defaultUrl);
       }
       return candidates;
     };
 
-    const connectWithIndex = (index: number) => {
+    const connectWithIndex = async (index: number, cachedList?: string[]) => {
       if (isUnmounted) return;
-      const candidates = getCandidateWsUrls();
+      const candidates = cachedList || (await getCandidateWsUrls());
+      if (isUnmounted) return;
       const targetUrl = candidates[index % candidates.length];
       const hasBackup = index + 1 < candidates.length;
 
@@ -434,7 +456,7 @@ export default function App() {
         setWsConnected(false);
         if (!opened && hasBackup) {
           // Immediately fail over to Backup Render Server without waiting 2s
-          connectWithIndex(index + 1);
+          connectWithIndex(index + 1, candidates);
         } else {
           reconnectTimer = window.setTimeout(() => connectWithIndex(0), 2000);
         }

@@ -137,12 +137,46 @@ async function startServer() {
     next();
   });
 
+  let activeLaptopTunnel: { url: string; updatedAt: number } | null = null;
+
   app.get('/api/health', (_req, res) => {
     res.json({
       ok: true,
       mode: process.env.RENDER === 'true' ? 'RENDER_BACKUP' : 'LAPTOP_PRIMARY',
       ts: Date.now(),
     });
+  });
+
+  app.get('/api/laptop-tunnel', (_req, res) => {
+    const isFresh =
+      activeLaptopTunnel && Date.now() - activeLaptopTunnel.updatedAt < 45000;
+    res.json({
+      active: Boolean(isFresh),
+      url: isFresh ? activeLaptopTunnel!.url : null,
+    });
+  });
+
+  app.post('/api/laptop-tunnel', (req, res) => {
+    const rawUrl = String(req.body?.url || '').trim();
+    if (!rawUrl) {
+      activeLaptopTunnel = null;
+      res.json({ ok: true, active: false });
+      return;
+    }
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        activeLaptopTunnel = {
+          url: `${parsed.protocol}//${parsed.host}`,
+          updatedAt: Date.now(),
+        };
+        res.json({ ok: true, active: true, url: activeLaptopTunnel.url });
+        return;
+      }
+    } catch {
+      // ignore invalid URL
+    }
+    res.status(400).json({ ok: false });
   });
 
   app.get('/api/rooms', (_req, res) => {

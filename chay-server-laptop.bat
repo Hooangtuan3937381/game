@@ -1,8 +1,9 @@
 @echo off
 chcp 65001 >nul
-title May Chu Co Dai Mat Ma - Pixel Puzzle Quest (Port 3000)
+title May Chu Laptop - Co Dai Mat Ma (Tu Dong Lien Ket Render 24/7)
 echo ================================================================
 echo   KHOI DONG MAY CHU GAME TREN LAPTOP (PING THAP ~5-15ms)
+echo   Tu dong ket noi voi game.hoangnhattuan.click (iNET + Render)
 echo ================================================================
 echo.
 
@@ -24,15 +25,6 @@ if not exist "dist\index.html" (
     call npm run build
 )
 
-echo.
-echo [3/3] May chu dang chay tai:
-echo   - Tren laptop nay: http://localhost:3000
-echo   - Neu da bat Cloudflare Tunnel: https://game.hoangnhattuan.click
-echo.
-echo (De mo ket noi ra Internet voi ten mien game.hoangnhattuan.click,
-echo  mo them 1 cua so CMD va chay: cloudflared tunnel run game-laptop)
-echo ================================================================
-set NODE_ENV=production
-set PORT=3000
-call npx tsx server.ts
+echo [3/3] Dang bat May Chu Laptop va lien ket tu dong voi Render...
+call node laptop-bridge.mjs
 pause
